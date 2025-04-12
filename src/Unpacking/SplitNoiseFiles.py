@@ -4,7 +4,7 @@ from Constants.Paths import *
 
 
 def split_file(input_path: Path, output_folder: Path, desired_length: int = 1) -> None:
-    input_filename = input_path.split(os.path.sep)[-1]
+    input_filename = input_path.name
     
     with wave.open(input_path, "rb") as input_file:
         num_channels = input_file.getnchannels()

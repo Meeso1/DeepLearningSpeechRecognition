@@ -3,13 +3,10 @@ import os
 from Constants.Paths import *
 
 
-def split_file(input_folder: Path, input_filename: str, desired_length: int = 1) -> None:
-    output_folder = train_audio_dir / "silence"
+def split_file(input_path: Path, output_folder: Path, desired_length: int = 1) -> None:
+    input_filename = input_path.split(os.path.sep)[-1]
     
-    output_folder.mkdir(parents=True, exist_ok=True)
-    
-    input_filepath = os.path.join(input_folder, input_filename)
-    with wave.open(input_filepath, "rb") as input_file:
+    with wave.open(input_path, "rb") as input_file:
         num_channels = input_file.getnchannels()
         sample_width = input_file.getsampwidth()
         frame_rate = input_file.getframerate()
@@ -38,11 +35,18 @@ def split_file(input_folder: Path, input_filename: str, desired_length: int = 1)
             chunk_count += 1
 
 
-def split_files() -> None:
+def split_files(length: float = 1, skip_if_output_exists: bool = True) -> None:
     """Split noise files into 1-second chunks and save them in the silence folder."""
     
     input_folder = train_audio_dir / "_background_noise_"
+    output_folder = train_audio_dir / "silence"
+    
+    if skip_if_output_exists and output_folder.exists():
+        print(f"Silence folder {output_folder} already exists. Skipping.")
+        return
+    
+    output_folder.mkdir(parents=True, exist_ok=True)
     
     for file in input_folder.iterdir():
         if file.is_file() and file.suffix.lower() == ".wav":
-            split_file(input_folder, file.name)
+            split_file(file, output_folder, desired_length=length)

@@ -40,8 +40,13 @@ def batch_process_audio(
     ws: int = 512, 
     hl: int = 256, 
     max_workers: int | None = None, 
-    backend: str | None = None
+    backend: str | None = None,
+    skip_if_output_exists: bool = True
 ) -> None:
+    if skip_if_output_exists and os.path.exists(output_dir):
+        print(f"Output directory {output_dir} already exists. Skipping.")
+        return
+    
     output_paths = {}
 
     for audio_file in audio_files:
@@ -81,22 +86,22 @@ def batch_process_audio(
                 pass
 
 
-def gen_train_spectrograms(backend: str | None = None) -> None:
+def gen_train_spectrograms(backend: str | None = None, skip_if_output_exists: bool = True) -> None:
     """Generate spectrograms for training audio files."""
     audio_files = []
     for folder in all_folders:
         audio_files.extend([os.path.join(train_audio_dir / folder, file) for file in os.listdir(train_audio_dir / folder)])
     
-    batch_process_audio(audio_files, train_spectrograms_dir, backend=backend)
+    batch_process_audio(audio_files, train_spectrograms_dir, backend=backend, skip_if_output_exists=skip_if_output_exists)
 
 
-def gen_test_spectrograms(backend: str | None = None) -> None:
+def gen_test_spectrograms(backend: str | None = None, skip_if_output_exists: bool = True) -> None:
     """Generate spectrograms for test audio files."""
     audio_files = [os.path.join(test_audio_dir, file) for file in os.listdir(test_audio_dir)]
-    batch_process_audio(audio_files, test_spectrograms_dir, backend=backend)
+    batch_process_audio(audio_files, test_spectrograms_dir, backend=backend, skip_if_output_exists=skip_if_output_exists)
 
 
-def generate_all_spectrograms(backend: str | None = None) -> None:
+def generate_all_spectrograms(backend: str | None = None, skip_if_output_exists: bool = True) -> None:
     """Generate spectrograms for both training and test audio files."""
-    gen_train_spectrograms(backend)
-    gen_test_spectrograms(backend)
+    gen_train_spectrograms(backend, skip_if_output_exists)
+    gen_test_spectrograms(backend, skip_if_output_exists)

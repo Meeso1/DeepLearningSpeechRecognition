@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from Paths import *
 from Labels import all_folders
 
-def extend_file(file_path, desired_length=1, noise_level=0.001):
+def extend_file(file_path: str, desired_length: float = 1, noise_level: float = 0.001) -> None:
     with wave.open(file_path, "rb") as file:
         num_channels = file.getnchannels()
         sample_width = file.getsampwidth()
@@ -28,23 +28,19 @@ def extend_file(file_path, desired_length=1, noise_level=0.001):
             file.setframerate(frame_rate)
             file.writeframes(frames)
 
-def extend_files():
+def extend_files() -> None:
+    """Extend all audio files to a fixed length by adding low-level noise."""
     tasks = []
     with ThreadPoolExecutor() as executor:
-        print("Processing training set")
         for folder in all_folders:
-            print(f"Processing {folder}...")
             path = train_audio_dir / folder
             for file in path.iterdir():
                 if file.is_file() and file.suffix.lower() == ".wav":
                     tasks.append(executor.submit(extend_file, str(file)))
-        print("Processing testing set")
         for file in test_audio_dir.iterdir():
             if file.is_file() and file.suffix.lower() == ".wav":
                 tasks.append(executor.submit(extend_file, str(file)))
+
         # Wait for all tasks to complete
         for task in tasks:
             task.result()
-
-extend_files()
-print("Processing complete.")

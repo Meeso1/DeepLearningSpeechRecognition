@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import RandomSampler, Sampler
 
+
 class CustomRandomSubsetSampler(RandomSampler):
     def __init__(self, indices, replacement=False, num_samples=None):
         RandomSampler.__init__(self, indices, replacement, num_samples)
@@ -9,14 +10,12 @@ class CustomRandomSubsetSampler(RandomSampler):
         for index in RandomSampler.__iter__(self):
             yield self.data_source[index]
 
+
 class RandomUndersampler(Sampler):
-    def __init__(self, labels: torch.tensor):
+    def __init__(self, labels: torch.Tensor):
         if len(labels.shape) > 1:
-            raise ValueError(
-                "labels can only have a single dimension (N, ), got shape: {}".format(
-                    labels.shape
-                )
-            )
+            raise ValueError(f"labels can only have a single dimension (N, ), got shape: {labels.shape}")
+
         self.tensors = [
             torch.nonzero(labels == i, as_tuple=False).flatten()
             for i in torch.unique(labels)

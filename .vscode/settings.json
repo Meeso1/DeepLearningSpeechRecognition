@@ -1,0 +1,6 @@
+{
+	"files.exclude": {
+		"Dataset/test/**": true,
+		"Dataset/train/**": true
+	}
+}

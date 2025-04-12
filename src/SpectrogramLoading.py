@@ -1,9 +1,9 @@
 import numpy as np
 from PIL import Image
-from Paths import train_spectrograms_dir, test_spectrograms_dir, output_dir_absolute_path
+from Constants.Paths import train_spectrograms_dir, test_spectrograms_dir, output_dir_absolute_path
 import os
 from dataclasses import dataclass
-from Labels import known_folders, labels
+from Constants.Labels import known_folders, labels
 
 
 @dataclass
@@ -20,12 +20,19 @@ class SpectrogramWithLabel:
     
 
 def get_train_validation_relative_paths() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    if not (output_dir_absolute_path / "training_set.txt").exists():
+        raise Exception(f"Training set file {output_dir_absolute_path / 'training_set.txt'} does not exist - run SplitDataset.split_dataset() first")
+    
+    if not (output_dir_absolute_path / "validation_set.txt").exists():
+        raise Exception(f"Validation set file {output_dir_absolute_path / 'validation_set.txt'} does not exist - run SplitDataset.split_dataset() first")
+
     with open(output_dir_absolute_path / "training_set.txt", "r") as f:
         train_paths = [line.strip().replace("\\", os.path.sep) for line in f.readlines()]
     with open(output_dir_absolute_path / "validation_set.txt", "r") as f:
         validation_paths = [line.strip().replace("\\", os.path.sep) for line in f.readlines()]
         
     return train_paths, validation_paths
+
 
 def get_test_paths_with_labels() -> list[PathWithLabel]:
     with open(output_dir_absolute_path / "testing_set.csv", "r") as f:

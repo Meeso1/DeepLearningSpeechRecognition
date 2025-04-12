@@ -2,10 +2,9 @@ import concurrent
 import torchaudio
 import torchaudio.transforms as T
 import os
-import sys
 from tqdm import tqdm
-from Paths import train_audio_dir, train_spectrograms_dir, test_spectrograms_dir, test_audio_dir
-from Labels import all_folders
+from Constants.Paths import train_audio_dir, train_spectrograms_dir, test_spectrograms_dir, test_audio_dir
+from Constants.Labels import all_folders
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from PIL import Image

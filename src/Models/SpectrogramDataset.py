@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 from SpectrogramLoading import PathWithLabel
 
+
 class SpectrogramDataset(Dataset):
     def __init__(self, paths_with_labels: list[PathWithLabel], label_index: dict[str, int]):
         self.paths_with_labels = paths_with_labels

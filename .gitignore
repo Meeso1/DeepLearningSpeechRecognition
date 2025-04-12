@@ -178,3 +178,6 @@ cython_debug/
 # Local dataset
 Dataset/**
 !Dataset/.gitkeep
+
+# Local output
+Outputs

@@ -36,18 +36,26 @@ def plot_accuracy_history(history: TrainingHistory, ax: plt.Axes | None = None):
     if made_new_ax:
         plt.show()
 
-def plot_confusion_matrix(true_labels: list[int], predicted_labels: list[int], labels: list[str]):
-    # Compute confusion matrix
+
+def plot_confusion_matrix(
+    true_labels: list[int], 
+    predicted_labels: list[int], 
+    labels: list[str],
+    ax: plt.Axes | None = None
+) -> None:
+    made_new_ax = False
+    if ax is None:
+        made_new_ax = True
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        fig.tight_layout()
+
     cm = confusion_matrix(true_labels, predicted_labels)
-    
-    # Normalise
     cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
 
-    # Plot confusion matrix
-    plt.figure(figsize=(10, 8))
     sns.heatmap(cm, annot=True, fmt='.2f', cmap='Blues', xticklabels=labels, yticklabels=labels)
-    plt.xlabel('Predicted')
-    plt.ylabel('True')
-    plt.title('Confusion Matrix')
-    plt.tight_layout()
-    plt.show()
+    ax.set_xlabel('Predicted')
+    ax.set_ylabel('True')
+    ax.set_title('Confusion Matrix')
+
+    if made_new_ax:
+        plt.show()

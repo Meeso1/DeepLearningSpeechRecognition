@@ -1,7 +1,7 @@
 import hashlib
 import os
-from Paths import train_spectrograms_dir, output_dir
-from Labels import all_folders
+from Constants.Paths import train_audio_dir, output_dir
+from Constants.Labels import all_folders
 from concurrent.futures import ThreadPoolExecutor
 
 MAX_NUM_WAVS_PER_CLASS = 2**27 - 1  # ~134M
@@ -15,7 +15,7 @@ def determine_set(file_path: str, training_percentage: float) -> str:
     return "training" if percentage < training_percentage else "validation"
 
 
-def split_dataset(training_percentage: float = 80) -> tuple[list[str], list[str]]:
+def split_dataset(training_percentage: float = 80) -> None:
     """Split dataset into training and validation sets.
     
     Returns:
@@ -34,7 +34,7 @@ def split_dataset(training_percentage: float = 80) -> tuple[list[str], list[str]
 
     with ThreadPoolExecutor() as executor:
         for folder in all_folders:
-            path = os.path.join(train_spectrograms_dir, folder)
+            path = os.path.join(train_audio_dir, folder)
             files = os.listdir(path)
             full_paths = [os.path.join(path, file) for file in files]
             results = executor.map(process_file, full_paths)
@@ -51,10 +51,10 @@ def split_dataset(training_percentage: float = 80) -> tuple[list[str], list[str]
             for item in data:
                 file.write(f"{item}\n")
 
+    os.makedirs(output_dir, exist_ok=True)
+    
     with ThreadPoolExecutor(max_workers=2) as exec_writer:
         future_training = exec_writer.submit(write_set, "training_set.txt", training_set)
         future_validation = exec_writer.submit(write_set, "validation_set.txt", validation_set)
         future_training.result()
         future_validation.result()
-        
-    return training_set, validation_set

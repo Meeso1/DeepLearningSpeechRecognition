@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
-root_dir = Path(os.path.dirname(os.path.abspath(__file__))).parent
+
+
+root_dir = Path(os.path.dirname(os.path.abspath(__file__))).parent.parent
 dataset_dir = root_dir / "Dataset"
 train_dir = dataset_dir / "train"
 test_dir = dataset_dir / "test"

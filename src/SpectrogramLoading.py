@@ -71,8 +71,8 @@ def get_paths_by_label() -> dict[str, list[str]]:
 def get_divided_paths_with_labels() -> tuple[list[PathWithLabel], list[PathWithLabel]]:
     train_paths, validation_paths = get_train_validation_relative_paths()
     
-    return [PathWithLabel(train_spectrograms_dir / path, path.split("/")[0] if path.split("/")[0] in known_folders else labels[-1]) for path in train_paths], \
-        [PathWithLabel(train_spectrograms_dir / path, path.split("/")[0] if path.split("/")[0] in known_folders else labels[-1]) for path in validation_paths]
+    return [PathWithLabel(str(train_spectrograms_dir / path), path.split("/")[0] if path.split("/")[0] in known_folders else labels[-1]) for path in train_paths], \
+        [PathWithLabel(str(train_spectrograms_dir / path), path.split("/")[0] if path.split("/")[0] in known_folders else labels[-1]) for path in validation_paths]
 
 
 def to_paths_with_labels(paths_by_label: dict[str, list[str]]) -> list[PathWithLabel]:
@@ -87,10 +87,11 @@ def load_spectrogram_from_png_file(file_path: str) -> np.ndarray:
     return pixel_array
 
 
-def load_spectrogram_from_path(path_with_label: PathWithLabel) -> SpectrogramWithLabel:
-    """Load a spectrogram from a path with label."""
-    spectrogram = load_spectrogram_from_png_file(path_with_label.path)
+def load_spectrogram_for_path(path_with_label: PathWithLabel) -> SpectrogramWithLabel:
+    """Load a spectrogram for a .wav file path with label."""
+    spectrogram = load_spectrogram_from_png_file(path_with_label.path.replace(".wav", ".png"))
     return SpectrogramWithLabel(spectrogram, path_with_label.label)
+
 
 def spectrograms_to_x_y(
     spectrograms: list[SpectrogramWithLabel],

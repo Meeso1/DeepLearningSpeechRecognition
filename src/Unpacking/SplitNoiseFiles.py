@@ -6,7 +6,7 @@ from Constants.Paths import *
 def split_file(input_path: Path, output_folder: Path, desired_length: int = 1) -> None:
     input_filename = input_path.name
     
-    with wave.open(input_path, "rb") as input_file:
+    with wave.open(str(input_path), "rb") as input_file:
         num_channels = input_file.getnchannels()
         sample_width = input_file.getsampwidth()
         frame_rate = input_file.getframerate()

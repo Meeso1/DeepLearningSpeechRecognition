@@ -7,17 +7,13 @@ import torch.nn as nn
 import torch.optim as optim
 import wandb
 import os
-import sys
 import pickle
 import tempfile
-from PIL import Image
 
 from Models.ModelBase import ModelBase
 from torch.utils.data import DataLoader, TensorDataset
 from Models.TrainingHistory import TrainingHistory
 from Models.RandomUndersampler import RandomUndersampler
-from Models.SpectrogramDataset import SpectrogramDataset
-from SpectrogramLoading import PathWithLabel
 
 
 @dataclass
@@ -139,24 +135,22 @@ class CnnModel(ModelBase):
 
     def train(
         self,
-        train_path: list[PathWithLabel],
-        val_path: list[PathWithLabel] | None = None,
+        train_data: list[tuple[np.ndarray, np.ndarray]],
+        val_data: list[tuple[np.ndarray, np.ndarray]] | None = None,
         epochs: int = 10,
         batch_size: int = 32
     ) -> None:
         # Special case to have a pretty fail instead of index access error
-        if len(train_path) == 0:
+        if len(train_data) == 0 or len(train_data[0]) == 0:
             raise ValueError("Empty training data provided")
 
         if self.model is None:
             # Get the first image to determine input shape
-            image = Image.open(train_path[0].path)
-            image = np.array(image)
-            self._initialize_model(image.shape)
+            self._initialize_model(train_data[0][0].shape)
 
-        train_loader = self._make_dataloader(train_path, batch_size, True)
-        val_loader = self._make_dataloader(val_path, batch_size) \
-            if val_path is not None else None
+        train_loader = self._validate_data_and_make_loader(train_data, batch_size, True)
+        val_loader = self._validate_data_and_make_loader(val_data, batch_size, False) \
+            if val_data is not None else None
 
         if self.history is None:
             self.history = TrainingHistory()
@@ -231,11 +225,25 @@ class CnnModel(ModelBase):
 
         return epoch_train_loss, epoch_train_accuracy
 
-    def _make_dataloader(self, paths: list[PathWithLabel], batch_size: int, balance: bool = False) -> DataLoader:
-        """Make DataLoader"""
+    def _validate_data_and_make_loader(
+        self, 
+        data: tuple[list[np.ndarray], np.ndarray], 
+        batch_size: int, 
+        undersample: bool = True
+    ) -> DataLoader:
+        """Validate (X, y) pair and make DataLoader for it"""
+        X, y = data
+        self._validate_x_and_y(X, y)
 
-        dataset = SpectrogramDataset(paths, self.labels_index)
-        undersampler = RandomUndersampler(torch.from_numpy(np.array([self.labels_index[p.label] for p in paths]))) if balance else None
+        y_one_hot = self._to_one_hot(y)
+
+        # Convert numpy arrays to PyTorch tensors for training data
+        X_tensor = torch.tensor(np.array(X), dtype=torch.float32).to(self.device)
+        y_tensor = torch.tensor(y_one_hot, dtype=torch.float32).to(self.device)
+
+        # Create data loaders for training data
+        dataset = TensorDataset(X_tensor, y_tensor)
+        undersampler = RandomUndersampler(torch.from_numpy(y).to(self.device)) if undersample else None
         return DataLoader(dataset, batch_size=batch_size, sampler=undersampler)
 
     def _perform_validation(self, val_loader: DataLoader | None, epoch: int) -> tuple[float, float] | None:
@@ -288,45 +296,27 @@ class CnnModel(ModelBase):
                   f'Val Loss: {val_metrics[0]:.4f} | '
                   f'Val Acc: {val_metrics[1]:6.2f}%')
 
-    def predict(self, X: list[np.ndarray]) -> np.ndarray:
+    def predict(self, X: list[np.ndarray], batch_size: int = 32) -> np.ndarray:
         self._validate_x(X)
 
         # Convert to PyTorch tensor
         X_tensor = torch.tensor(np.array(X), dtype=torch.float32).to(self.device)
+        dataset = TensorDataset(X_tensor)
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
         # Set model to evaluation mode
         self.model.eval()
 
         # Make predictions
         with torch.no_grad():
-            outputs = self.model(X_tensor)
-            _, predicted = torch.max(outputs, 1)
-
-        # Return predictions as numpy array
-        return predicted.cpu().numpy()
-    
-    def evaluate(self, test_paths: list[PathWithLabel], batch_size: int = 32) -> tuple[np.ndarray, np.ndarray]:
-        """Evaluates the model on test data and returns the predictions"""
-        if self.model is None:
-            raise ValueError("Model has not been trained yet")
-
-
-        test_loader = self._make_dataloader(test_paths, batch_size)
-        self.model.eval()
-
-        all_predicted = []
-        all_labels = []
-
-        with torch.no_grad():
-            for inputs, targets_one_hot in test_loader:
-                inputs = inputs.to(self.device)
-                
+            all_predicted = []
+            for inputs in loader:
                 outputs = self.model(inputs)
                 _, predicted = torch.max(outputs, 1)
                 all_predicted.append(predicted.cpu())
-                all_labels.append(targets_one_hot.argmax(dim=1))
 
-        return torch.cat(all_labels).numpy(), torch.cat(all_predicted).numpy()
+        # Return predictions as numpy array
+        return torch.cat(all_predicted).numpy()
 
     def get_history(self) -> TrainingHistory:
         return self.history

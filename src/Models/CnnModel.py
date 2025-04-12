@@ -35,9 +35,6 @@ class CnnModel(ModelBase):
         beta_1: float = 0.9,
         beta_2: float = 0.999,
         eps: float = 1e-8,
-        extractor_dropout_1: float = 0.6,
-        extractor_dropout_2: float = 0.4,
-        extractor_dropout_3: float = 0.2,
         classifier_dropout_1: float = 0.3,
         classifier_dropout_2: float = 0.3,
         classifier_dropout_3: float = 0.1,
@@ -54,8 +51,6 @@ class CnnModel(ModelBase):
         self.beta_2: float = beta_2
         self.eps: float = eps
         self.lr_decay: float = lr_decay
-        self.extractor_dropouts: tuple[float, float, float] = \
-            (extractor_dropout_1, extractor_dropout_2, extractor_dropout_3)
         self.classifier_dropouts: tuple[float, float, float] = \
             (classifier_dropout_1, classifier_dropout_2, classifier_dropout_3)
 
@@ -88,7 +83,6 @@ class CnnModel(ModelBase):
         self.model = self.CnnModule(
             input_shape,
             self.num_classes,
-            self.extractor_dropouts,
             (128, 64, 32),
             self.classifier_dropouts
         ).to(self.device)
@@ -336,7 +330,6 @@ class CnnModel(ModelBase):
             'beta_1': self.beta_1,
             'beta_2': self.beta_2,
             'eps': self.eps,
-            'extractor_dropouts': self.extractor_dropouts,
             'classifier_dropouts': self.classifier_dropouts,
             'history': self.history,
             'wandb_details': self.wandb_details,
@@ -351,9 +344,6 @@ class CnnModel(ModelBase):
             'beta_1': self.beta_1,
             'beta_2': self.beta_2,
             'eps': self.eps,
-            'extractor_dropout_1': self.extractor_dropouts[0],
-            'extractor_dropout_2': self.extractor_dropouts[1],
-            'extractor_dropout_3': self.extractor_dropouts[2],
             'classifier_dropout_1': self.classifier_dropouts[0],
             'classifier_dropout_2': self.classifier_dropouts[1],
             'classifier_dropout_3': self.classifier_dropouts[2]
@@ -368,9 +358,6 @@ class CnnModel(ModelBase):
             beta_1=state_dict['beta_1'],
             beta_2=state_dict['beta_2'],
             eps=state_dict['eps'],
-            extractor_dropout_1=state_dict['extractor_dropouts'][0],
-            extractor_dropout_2=state_dict['extractor_dropouts'][1],
-            extractor_dropout_3=state_dict['extractor_dropouts'][2],
             classifier_dropout_1=state_dict['classifier_dropouts'][0],
             classifier_dropout_2=state_dict['classifier_dropouts'][1],
             classifier_dropout_3=state_dict['classifier_dropouts'][2],
@@ -408,7 +395,6 @@ class CnnModel(ModelBase):
             self,
             in_channels: int,
             out_channels: int,
-            dropout_rate: float = 0.3
         ) -> None:
             super().__init__()
 
@@ -424,10 +410,7 @@ class CnnModel(ModelBase):
                 nn.ReLU(inplace=True),
 
                 # Max pooling
-                nn.MaxPool2d(kernel_size=2, stride=2),
-
-                # Dropout
-                nn.Dropout2d(dropout_rate)
+                nn.MaxPool2d(kernel_size=2, stride=2)
             )
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -438,15 +421,14 @@ class CnnModel(ModelBase):
             self,
             input_shape: tuple[int, int],
             input_channels: int = 1,
-            dropout_rates: tuple[float, float, float] = (0.3, 0.3, 0.3)
         ) -> None:
             super().__init__()
             self.input_shape = input_shape
 
             # Create three convolutional blocks with increasing number of channels
-            self.block1 = CnnModel.ConvBlock(input_channels, 16, dropout_rates[0])
-            self.block2 = CnnModel.ConvBlock(16, 32, dropout_rates[1])
-            self.block3 = CnnModel.ConvBlock(32, 64, dropout_rates[2])
+            self.block1 = CnnModel.ConvBlock(input_channels, 16)
+            self.block2 = CnnModel.ConvBlock(16, 32)
+            self.block3 = CnnModel.ConvBlock(32, 64)
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
             x = x.unsqueeze(1)
@@ -502,18 +484,13 @@ class CnnModel(ModelBase):
             self,
             input_shape: tuple[int, int],
             num_classes: int,
-            extractor_dropout_rates: tuple[float, float, float] = (0.3, 0.3, 0.3),
             classifier_hidden_dims: tuple[int, int, int] = (128, 64, 32),
             classifier_dropout_rates: tuple[float, float, float] = (0.3, 0.3, 0.3)
         ) -> None:
             super().__init__()
 
-            self.feature_extractor = CnnModel.FeatureExtractor(
-                input_shape,
-                input_channels=1,  # Changed 'channels' to 'input_channels' to match the FeatureExtractor initialization
-                dropout_rates=extractor_dropout_rates)
+            self.feature_extractor = CnnModel.FeatureExtractor(input_shape, input_channels=1)
 
-            # Get the number of output channels from the feature extractor
             final_channels, conv_output_height, conv_output_width = self.feature_extractor.get_output_size()
             flattened_size = final_channels * conv_output_height * conv_output_width
 

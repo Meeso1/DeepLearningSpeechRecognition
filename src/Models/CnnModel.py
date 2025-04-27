@@ -1,13 +1,9 @@
-import shutil
 from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
-import os
-import pickle
-import tempfile
 
 from Models.ModelBase import ModelBase
 from torch.utils.data import DataLoader, TensorDataset
@@ -60,13 +56,6 @@ class CnnModel(ModelBase):
 
         self.set_random_seed(seed)
 
-    def set_random_seed(self, seed: int) -> None:
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(seed)
-            
-        np.random.seed(seed)
-
     def _initialize_model(self, input_shape: tuple[int, int]) -> None:
         """Initialize stuff that depends on input shape (so that it can be inferred from data)"""
         self.input_shape = input_shape
@@ -109,14 +98,6 @@ class CnnModel(ModelBase):
         if np.max(y) >= self.num_classes or np.min(y) < 0:
             raise ValueError(f"y contains invalid class indices. Expected range [0, {self.num_classes-1}], got range [{np.min(y)}, {np.max(y)}]")
 
-    def _to_one_hot(self, y: np.ndarray) -> np.ndarray:
-        """Convert class indices to one-hot encoded array."""
-        return np.eye(self.num_classes)[y]
-    
-    def _from_one_hot(self, y: np.ndarray) -> np.ndarray:
-        """Convert one-hot encoded array to class indices."""
-        return np.argmax(y, axis=1)
-
     def train(
         self,
         train_data: list[tuple[np.ndarray, np.ndarray]],
@@ -143,7 +124,7 @@ class CnnModel(ModelBase):
             wandb.init(
                 project=self.wandb_details.project,
                 name=self.wandb_details.experiment_name,
-                config=self._get_config_for_wandb(),
+                config=self.get_config_for_wandb(),
                 settings=wandb.Settings(silent=True)
             )
 
@@ -327,7 +308,7 @@ class CnnModel(ModelBase):
             'validate_every': self.validate_every
         }
         
-    def _get_config_for_wandb(self) -> dict[str, Any]:
+    def get_config_for_wandb(self) -> dict[str, Any]:
         return {
             'learning_rate': self.learning_rate,
             'lr_decay': self.lr_decay,
@@ -364,21 +345,6 @@ class CnnModel(ModelBase):
         model.history = state_dict['history']
 
         return model
-
-    def save_model_to_wandb(self, name: str) -> None:
-        temp_dir = tempfile.mkdtemp()
-        temp_file_path = os.path.join(temp_dir, "model.pkl")
-        
-        with open(temp_file_path, "wb") as f:
-            pickle.dump(self.get_state_dict(), f)
-        
-        artifact = wandb.Artifact(name=name, type="model", description="Model state dict")
-        artifact.add_file(temp_file_path)
-        
-        logged_artifact = wandb.log_artifact(artifact)
-        logged_artifact.wait()
-        
-        shutil.rmtree(temp_dir)
 
     class ConvBlock(nn.Module):
         def __init__(

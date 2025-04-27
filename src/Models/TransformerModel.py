@@ -1,14 +1,10 @@
-from typing import Any, Tuple
+from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
-import os
-import pickle
-import tempfile
 import math
-import shutil
 
 from Models.ModelBase import ModelBase
 from torch.utils.data import DataLoader, TensorDataset
@@ -17,7 +13,6 @@ from Models.RandomUndersampler import RandomUndersampler # Keep for potential fu
 from Models.WandbDetails import WandbDetails
 
 
-# TODO: Implement proper positional encoding
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
         super().__init__()
@@ -43,160 +38,144 @@ class TransformerModel(ModelBase):
     def __init__(
         self,
         classes: list[str],
-        # --- Transformer specific ---
-        d_model: int = 512, # Embedding dimension
-        nhead: int = 8,     # Number of attention heads
+        embedding_dimension: int = 512,
+        num_attention_heads: int = 8,
         num_encoder_layers: int = 6,
         num_decoder_layers: int = 6,
-        dim_feedforward: int = 2048, # Dimension in FFN
+        dim_feedforward: int = 2048,
         dropout: float = 0.1,
-        # --- Optimizer specific ---
-        learning_rate: float = 0.0001, # Transformers often need lower LR
-        lr_decay: float = 0.0,       # LR decay might be handled differently (e.g., Noam schedule)
+        learning_rate: float = 0.0001,
+        lr_decay: float = 0.0,
         beta_1: float = 0.9,
-        beta_2: float = 0.98, # Common beta2 for transformers
-        eps: float = 1e-9,    # Common eps for transformers
-        # --- Training specific ---
+        beta_2: float = 0.98,
+        eps: float = 1e-9,
         print_every: int | None = 1,
         validate_every: int = 1,
         wandb_details: WandbDetails | None = None,
         seed: int = 42
     ) -> None:
         self.classes: list[str] = classes
-        self.num_classes: int = len(classes) # Output dimension
+        self.num_classes: int = len(classes)
         self.labels_index: dict[str, int] = {v: i for i, v in enumerate(classes)}
         
-        # Transformer HParams
-        self.d_model = d_model
-        self.nhead = nhead
+        self.embedding_dimension = embedding_dimension
+        self.num_attention_heads = num_attention_heads
         self.num_encoder_layers = num_encoder_layers
         self.num_decoder_layers = num_decoder_layers
         self.dim_feedforward = dim_feedforward
         self.dropout = dropout
 
-        # Optimizer HParams
         self.learning_rate: float = learning_rate
         self.beta_1: float = beta_1
         self.beta_2: float = beta_2
         self.eps: float = eps
-        self.lr_decay: float = lr_decay # May need adjustment later
+        self.lr_decay: float = lr_decay
 
-        # Training config
         self.wandb_details: WandbDetails | None = wandb_details
         self.quiet: bool = print_every is None
         self.print_every: int = print_every if print_every is not None else 1
         self.validate_every: int = validate_every
 
-        # Model state - initialized later
-        self.input_feature_dim: int | None = None # Input feature dimension (e.g., MFCC count)
+        self.input_shape: tuple[int, int] | None = None
         self.model: nn.Module | None = None
         self.optimizer: optim.Optimizer | None = None
-        self.lr_scheduler: optim.lr_scheduler.LambdaLR | None = None # Or other scheduler like Noam
-        # self.criterion = nn.CrossEntropyLoss() # More suitable for sequence classification/generation
-        self.criterion = nn.BCELoss() # Keeping BCELoss for now, assuming similar output structure to CNN for simplicity
+        self.lr_scheduler: optim.lr_scheduler.LambdaLR | None = None
+        self.criterion = nn.BCELoss()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.history: TrainingHistory | None = None
 
         self.set_random_seed(seed)
 
-    def set_random_seed(self, seed: int) -> None:
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(seed)
-            
-        np.random.seed(seed)
-
-    def _initialize_model(self, input_feature_dim: int, max_seq_len: int) -> None:
+    def _initialize_model(self, input_shape: tuple[int, int]) -> None:
         """Initialize stuff that depends on input shape."""
-        # Note: Transformers typically don't depend on input *sequence length* for the model definition itself,
-        # but might need max_seq_len for positional encoding if not learned.
-        # The crucial part is the feature dimension.
-        self.input_feature_dim = input_feature_dim
+        self.input_shape = input_shape
         self.model = self.TransformerModule(
-            input_dim=self.input_feature_dim,
-            output_dim=self.num_classes, # Assuming output is still num_classes like CNN
-            d_model=self.d_model,
-            nhead=self.nhead,
+            input_dim=self.input_shape[1],
+            output_dim=self.num_classes,
+            d_model=self.embedding_dimension,
+            nhead=self.num_attention_heads,
             num_encoder_layers=self.num_encoder_layers,
-            num_decoder_layers=self.num_decoder_layers, # Not used in this simplified version
+            num_decoder_layers=self.num_decoder_layers,
             dim_feedforward=self.dim_feedforward,
             dropout=self.dropout,
-            max_seq_len=max_seq_len # For Positional Encoding
+            max_seq_len=self.input_shape[0]
         ).to(self.device)
 
-        # TODO: Consider AdamW and a more sophisticated scheduler (Noam)
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=self.learning_rate,
             betas=(self.beta_1, self.beta_2),
             eps=self.eps
         )
-        # Simple decay for now
+
         self.lr_scheduler = optim.lr_scheduler.LambdaLR(
             self.optimizer,
             lr_lambda=lambda epoch: (1 - self.lr_decay) ** epoch if self.lr_decay > 0 else 1.0
         )
 
-    def _pad_sequences(self, sequences: list[np.ndarray], max_len: int | None = None) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Pad sequences to the same length and create a mask."""
-        # Assumes input shape: (seq_len, features)
-        # Output shape: (batch, seq_len, features)
-        # Mask shape: (batch, seq_len) - True where padded
-        if max_len is None:
-            max_len = max(seq.shape[0] for seq in sequences)
+    def _generate_padding_mask(self, batch_tensor: torch.Tensor) -> torch.Tensor:
+        """Generate padding mask assuming zero vectors are padding.
         
-        feature_dim = sequences[0].shape[1]
-        padded_sequences = np.zeros((len(sequences), max_len, feature_dim), dtype=np.float32)
-        mask = np.ones((len(sequences), max_len), dtype=bool) # True means use, False means ignore (padding)
+        Args:
+            batch_tensor: Input tensor of shape (B, S, F).
 
-        for i, seq in enumerate(sequences):
-            length = seq.shape[0]
-            padded_sequences[i, :length, :] = seq
-            mask[i, length:] = False # Mark padding positions as False
-
-        return torch.from_numpy(padded_sequences).to(self.device), torch.from_numpy(mask).to(self.device)
+        Returns:
+            mask: Boolean tensor of shape (B, S) where True indicates a valid token.
+        """
+        # Check if the sum of absolute values across the feature dimension is zero
+        # Add a small epsilon for numerical stability if needed, though comparing to 0 should be fine for exact zeros
+        mask = torch.abs(batch_tensor).sum(dim=2) != 0 
+        return mask
 
     def _validate_x(self, X: list[np.ndarray]) -> None:
-        """Validate X for shape consistency (feature dimension)."""
+        """Validate X for shape consistency (sequence length and feature dimension)."""
         if len(X) == 0:
             raise ValueError("Empty input data provided")
 
-        feature_dim = X[0].shape[1]
-        for i, seq in enumerate(X):
-            if len(seq.shape) != 2:
-                 raise ValueError(f"Expected 2D array (seq_len, features) at index {i}, got {seq.shape}")
-            if seq.shape[1] != feature_dim:
-                raise ValueError(f"Inconsistent feature dimension at index {i}: expected {feature_dim}, got {seq.shape[1]}")
+        # Check that all images have shape equal to input_shape
+        for i, img in enumerate(X):
+            if img.shape != self.input_shape:
+                raise ValueError(f"Inconsistent image shape at index {i}: expected {self.input_shape}, got {img.shape}")
         
-        # Initialize if needed, using the determined feature dimension
-        if self.model is None:
-             # Determine max_len from the input data for Positional Encoding
-             # This might not be ideal, usually PE max_len is predefined
-            max_len = max(seq.shape[0] for seq in X) 
-            self._initialize_model(feature_dim, max_len)
-        elif self.input_feature_dim != feature_dim:
-             raise ValueError(f"Input feature dimension mismatch: model expects {self.input_feature_dim}, got {feature_dim}")
-
-
     def _validate_x_and_y(self, X: list[np.ndarray], y: np.ndarray) -> None:
         """Validate X and y for shape and length consistency."""
-        self._validate_x(X) # Also handles model initialization
+        self._validate_x(X)
 
         if len(X) != len(y):
-            raise ValueError(f"Number of samples in X ({len(X)}) does not match y ({y.shape})")
+            raise ValueError(f"Number of samples in X ({len(X)}) does not match y ({len(y)})")
 
         # Check that y contains valid class indices
-        if np.max(y) >= self.num_classes or np.min(y) < 0:
+        if len(y) > 0 and (np.max(y) >= self.num_classes or np.min(y) < 0):
             raise ValueError(f"y contains invalid class indices. Expected range [0, {self.num_classes-1}], got range [{np.min(y)}, {np.max(y)}]")
 
-    def _to_one_hot(self, y: np.ndarray) -> np.ndarray:
-        """Convert class indices to one-hot encoded array."""
-        return np.eye(self.num_classes)[y]
-    
-    def _from_one_hot(self, y: np.ndarray) -> np.ndarray:
-        """Convert one-hot encoded array to class indices."""
-        return np.argmax(y, axis=1)
+    def _validate_data_and_make_loader(
+        self, 
+        data: list[tuple[np.ndarray, np.ndarray]], 
+        batch_size: int, 
+        undersample: bool = False,
+        shuffle: bool = True
+    ) -> DataLoader:
+        """Validate (X, y) pair and make DataLoader for it"""
+
+        X, y = zip(*data)
+        X, y = list(X), np.array(y)
+        
+        self._validate_x_and_y(X, y)
+
+        X_np = np.array(X, dtype=np.float32) 
+        y_one_hot = self._to_one_hot(y)
+
+        X_tensor = torch.from_numpy(X_np).to(self.device)
+        y_tensor = torch.from_numpy(y_one_hot).to(self.device)
+
+        dataset = TensorDataset(X_tensor, y_tensor)
+        sampler = RandomUndersampler(torch.from_numpy(y).to(self.device)) if undersample else None
+        
+        # If using sampler, shuffle must be False
+        use_shuffle = shuffle and (sampler is None) 
+        
+        return DataLoader(dataset, batch_size=batch_size, shuffle=use_shuffle, sampler=sampler)
 
     def train(
         self,
@@ -205,25 +184,16 @@ class TransformerModel(ModelBase):
         epochs: int = 10,
         batch_size: int = 32
     ) -> None:
+        # Special case to have a pretty fail instead of index access error
         if len(train_data) == 0 or len(train_data[0]) == 0:
             raise ValueError("Empty training data provided")
 
-        # Unzip data
-        X_train, y_train = zip(*train_data)
-        X_train, y_train = list(X_train), np.array(y_train)
+        if self.model is None:
+            self._initialize_model(train_data[0][0].shape)
 
-        # Validate and initialize model based on training data
-        self._validate_x_and_y(X_train, y_train)
-
-        # Prepare validation data if provided
-        X_val, y_val = None, None
-        if val_data is not None and len(val_data) > 0:
-            X_val, y_val = zip(*val_data)
-            X_val, y_val = list(X_val), np.array(y_val)
-            self._validate_x_and_y(X_val, y_val) # Use validation data shapes only for validation
-
-        # Create DataLoaders (manual batching for now due to padding)
-        # TODO: Integrate padding into DataLoader/collate_fn for efficiency
+        train_loader = self._validate_data_and_make_loader(train_data, batch_size, shuffle=True)
+        val_loader = self._validate_data_and_make_loader(val_data, batch_size, shuffle=False) \
+            if val_data is not None else None
         
         if self.history is None:
             self.history = TrainingHistory()
@@ -232,48 +202,28 @@ class TransformerModel(ModelBase):
             wandb.init(
                 project=self.wandb_details.project,
                 name=self.wandb_details.experiment_name,
-                config=self._get_config_for_wandb(),
+                config=self.get_config_for_wandb(),
                 settings=wandb.Settings(silent=True)
             )
 
-        num_train_samples = len(X_train)
-        indices = np.arange(num_train_samples)
-
         for epoch in range(epochs):
             self.model.train()
-            np.random.shuffle(indices) # Shuffle data each epoch
-            
             epoch_train_loss = 0.0
             correct_train = 0
             total_train = 0
             
-            # Manual batching
-            for i in range(0, num_train_samples, batch_size):
-                batch_indices = indices[i:min(i + batch_size, num_train_samples)]
-                batch_X = [X_train[j] for j in batch_indices]
-                batch_y = y_train[batch_indices]
-
-                # Pad batch sequences
-                # TODO: Use consistent max_len if possible, maybe from self.model.max_seq_len
-                max_len_batch = max(seq.shape[0] for seq in batch_X) 
-                inputs, src_key_padding_mask = self._pad_sequences(batch_X, max_len=max_len_batch)
+            for _, (inputs, targets_one_hot) in enumerate(train_loader):
+                # Inputs: (B, S, F), Targets: (B, C)
+                inputs = inputs.to(self.device)
+                targets_one_hot = targets_one_hot.to(self.device)
                 
-                # Target needs to be one-hot for BCELoss
-                targets_one_hot = torch.tensor(self._to_one_hot(batch_y), dtype=torch.float32).to(self.device)
-
-                # print(f"Input shape: {inputs.shape}") # B, S, F
-                # print(f"Mask shape: {src_key_padding_mask.shape}") # B, S
-                # print(f"Target shape: {targets_one_hot.shape}") # B, C
+                # Generate mask from pre-padded data
+                src_key_padding_mask = self._generate_padding_mask(inputs) # (B, S), True=valid
 
                 self.optimizer.zero_grad()
 
-                # Forward pass - adapt based on TransformerModule output
-                # Assuming model outputs shape (B, C) after processing sequence
-                # Need to adjust TransformerModule's forward if it outputs (S, B, C)
                 outputs = self.model(inputs, src_key_padding_mask) # Pass mask
                 
-                # print(f"Output shape: {outputs.shape}") # B, C
-
                 loss = self.criterion(outputs, targets_one_hot)
 
                 loss.backward()
@@ -281,26 +231,22 @@ class TransformerModel(ModelBase):
                 # torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
 
-                epoch_train_loss += loss.detach().item() * len(batch_indices) # Weighted by batch size
+                epoch_train_loss += loss.detach().item() * inputs.size(0) 
                 _, predicted = outputs.max(1)
                 total_train += targets_one_hot.size(0)
                 correct_train += predicted.eq(targets_one_hot.argmax(dim=1)).sum().item()
 
-            # Calculate training metrics
-            epoch_train_loss /= num_train_samples
+            epoch_train_loss /= len(train_loader.dataset)
             epoch_train_accuracy = 100.0 * correct_train / total_train
             self.history.train_loss.append(epoch_train_loss)
             self.history.train_accuracy.append(epoch_train_accuracy)
 
-            # --- Validation ---
-            epoch_val_loss, epoch_val_accuracy = None, None
-            if X_val is not None and y_val is not None and (epoch + 1) % self.validate_every == 0:
-                epoch_val_loss, epoch_val_accuracy = self._perform_validation(X_val, y_val, batch_size)
+
+            epoch_val_loss, epoch_val_accuracy = self._perform_validation(val_loader, epoch)
             
             self.history.val_loss.append(epoch_val_loss)
             self.history.val_accuracy.append(epoch_val_accuracy)
 
-            # Log to Wandb
             if self.wandb_details is not None:
                 log_dict = {
                     'epoch': epoch + 1,
@@ -314,8 +260,6 @@ class TransformerModel(ModelBase):
                     log_dict['val_accuracy'] = epoch_val_accuracy
                 wandb.log(log_dict)
 
-
-            # Update learning rate
             self.lr_scheduler.step()
 
             if not self.quiet and ((epoch+1) % self.print_every == 0 or epoch == epochs-1):
@@ -331,35 +275,34 @@ class TransformerModel(ModelBase):
 
             wandb.finish()
 
-    # Note: _train_epoch is integrated into the main train loop for simplicity with manual batching
+    def _perform_validation(self, val_loader: DataLoader | None, epoch: int) -> tuple[float, float] | None:
+        """Perform validation using a DataLoader"""
+        if val_loader is None or (epoch + 1) % self.validate_every != 0:
+            return None, None
 
-    # Note: _validate_data_and_make_loader replaced by manual batching in train/validation loops
-
-    def _perform_validation(self, X_val: list[np.ndarray], y_val: np.ndarray, batch_size: int) -> tuple[float, float]:
-        """Perform validation"""
         self.model.eval()
         val_loss = 0.0
         correct_val = 0
-        total_val = len(y_val)
+        total_val = 0
 
         with torch.no_grad():
-            for i in range(0, total_val, batch_size):
-                batch_X = X_val[i:min(i + batch_size, total_val)]
-                batch_y = y_val[i:min(i + batch_size, total_val)]
+            for inputs, targets_one_hot in val_loader:
+                # Inputs: (B, S, F), Targets: (B, C)
+                inputs = inputs.to(self.device)
+                targets_one_hot = targets_one_hot.to(self.device)
                 
-                # Pad batch sequences
-                max_len_batch = max(seq.shape[0] for seq in batch_X) 
-                inputs, src_key_padding_mask = self._pad_sequences(batch_X, max_len=max_len_batch)
-                targets_one_hot = torch.tensor(self._to_one_hot(batch_y), dtype=torch.float32).to(self.device)
+                # Generate mask from pre-padded data
+                src_key_padding_mask = self._generate_padding_mask(inputs) # (B, S), True=valid
 
                 outputs = self.model(inputs, src_key_padding_mask)
                 loss = self.criterion(outputs, targets_one_hot)
 
-                val_loss += loss.detach().item() * len(batch_X) # Weighted average
+                val_loss += loss.detach().item() * inputs.size(0)
                 _, predicted = outputs.max(1)
+                total_val += targets_one_hot.size(0)
                 correct_val += predicted.eq(targets_one_hot.argmax(dim=1)).sum().item()
 
-        epoch_val_loss = val_loss / total_val
+        epoch_val_loss = val_loss / len(val_loader.dataset)
         epoch_val_accuracy = 100.0 * correct_val / total_val
         return epoch_val_loss, epoch_val_accuracy
 
@@ -380,21 +323,24 @@ class TransformerModel(ModelBase):
         
         print(f'{epoch_str} | {train_str} | {val_str} | {lr_str}')
 
-
     def predict(self, X: list[np.ndarray], batch_size: int = 32) -> np.ndarray:
-        self._validate_x(X) # Ensures model is initialized and feature dim matches
+        self._validate_x(X)
 
         self.model.eval()
         all_predicted = []
-        total_samples = len(X)
+
+        X_np = np.array(X, dtype=np.float32)
+        X_tensor = torch.from_numpy(X_np).to(self.device)
+
+        dataset = TensorDataset(X_tensor)
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
         with torch.no_grad():
-            for i in range(0, total_samples, batch_size):
-                batch_X = X[i:min(i + batch_size, total_samples)]
+            for batch in loader:
+                inputs = batch[0].to(self.device) # DataLoader wraps tensor in a tuple/list
                 
-                # Pad batch sequences
-                max_len_batch = max(seq.shape[0] for seq in batch_X)
-                inputs, src_key_padding_mask = self._pad_sequences(batch_X, max_len=max_len_batch)
+                # Generate mask from pre-padded data
+                src_key_padding_mask = self._generate_padding_mask(inputs) # (B, S), True=valid
                 
                 outputs = self.model(inputs, src_key_padding_mask) # B, C
                 _, predicted = torch.max(outputs, 1) # Get class index
@@ -403,137 +349,88 @@ class TransformerModel(ModelBase):
         return torch.cat(all_predicted).numpy()
 
     def get_history(self) -> TrainingHistory:
-        if self.history is None:
-            # Return an empty history if training hasn't happened
-             return TrainingHistory()
-        return self.history
+        return self.history if self.history is not None else TrainingHistory()
 
     def get_state_dict(self) -> dict[str, Any]:
         if self.model is None:
             raise ValueError("Model has not been initialized or trained yet")
 
         return {
-            # Model HParams
-            'input_feature_dim': self.input_feature_dim,
-            'd_model': self.d_model,
-            'nhead': self.nhead,
+            # Model params
+            'input_shape': self.input_shape,
+            'embedding_dimension': self.embedding_dimension,
+            'num_attention_heads': self.num_attention_heads,
             'num_encoder_layers': self.num_encoder_layers,
             'num_decoder_layers': self.num_decoder_layers,
             'dim_feedforward': self.dim_feedforward,
             'dropout': self.dropout,
-            'max_seq_len': self.model.max_seq_len, # Get from inner model
-            # Optimizer HParams
+            # Optimizer params
             'learning_rate': self.learning_rate,
             'lr_decay': self.lr_decay,
             'beta_1': self.beta_1,
             'beta_2': self.beta_2,
             'eps': self.eps,
-            # Training Config
+            # Training config
             'classes': self.classes,
             'history': self.history,
             'wandb_details': self.wandb_details,
             'print_every': self.print_every if not self.quiet else None,
             'validate_every': self.validate_every,
-            # Model State
+            # Model state
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.lr_scheduler.state_dict(),
         }
         
-    def _get_config_for_wandb(self) -> dict[str, Any]:
-        # Consolidate HParams for logging
-        config = {
+    def get_config_for_wandb(self) -> dict[str, Any]:
+        return {
             # Model
-            'd_model': self.d_model,
-            'nhead': self.nhead,
+            'embedding_dimension': self.embedding_dimension,
+            'num_attention_heads': self.num_attention_heads,
             'num_encoder_layers': self.num_encoder_layers,
             'num_decoder_layers': self.num_decoder_layers,
             'dim_feedforward': self.dim_feedforward,
             'dropout': self.dropout,
             # Optimizer
             'learning_rate': self.learning_rate,
-            'lr_decay': self.lr_decay, # Potentially replace with scheduler type
+            'lr_decay': self.lr_decay,
             'beta_1': self.beta_1,
             'beta_2': self.beta_2,
-            'eps': self.eps,
-             # Data/Input - useful context
-            'input_feature_dim': self.input_feature_dim, 
-            'num_classes': self.num_classes,
-            'max_seq_len': self.model.max_seq_len if self.model else None, # Log if initialized
+            'eps': self.eps
         }
-        return config
-
 
     @classmethod
     def load_state_dict(cls, state_dict: dict[str, Any]) -> "TransformerModel":
-        # Create instance with saved HParams
         model = TransformerModel(
-             # Model HParams
             classes=state_dict['classes'],
-            d_model=state_dict['d_model'],
-            nhead=state_dict['nhead'],
+            embedding_dimension=state_dict['embedding_dimension'],
+            num_attention_heads=state_dict['num_attention_heads'],
             num_encoder_layers=state_dict['num_encoder_layers'],
             num_decoder_layers=state_dict['num_decoder_layers'],
             dim_feedforward=state_dict['dim_feedforward'],
             dropout=state_dict['dropout'],
-             # Optimizer HParams
+             # Optimizer params
             learning_rate=state_dict['learning_rate'],
-            lr_decay=state_dict.get('lr_decay', 0.0), # Handle potential missing key if added later
+            lr_decay=state_dict.get('lr_decay', 0.0),
             beta_1=state_dict['beta_1'],
             beta_2=state_dict['beta_2'],
             eps=state_dict['eps'],
-             # Training Config
-            print_every=state_dict.get('print_every'), # Use .get for safer loading
+             # Training config
+            print_every=state_dict.get('print_every'),
             validate_every=state_dict.get('validate_every', 1),
             wandb_details=state_dict.get('wandb_details') 
         )
 
-        # Initialize the inner model structure using loaded dimensions
-        model._initialize_model(
-            state_dict['input_feature_dim'], 
-            state_dict['max_seq_len']
-        )
+        model._initialize_model(state_dict['input_shape'])
         
-        # Load the learned weights and optimizer/scheduler states
         model.model.load_state_dict(state_dict['model_state_dict'])
         model.optimizer.load_state_dict(state_dict['optimizer_state_dict'])
-        # Handle potential missing scheduler state for backward compatibility
-        if 'scheduler_state_dict' in state_dict:
-             model.lr_scheduler.load_state_dict(state_dict['scheduler_state_dict'])
+        model.lr_scheduler.load_state_dict(state_dict['scheduler_state_dict'])
 
-        # Load history if available
         model.history = state_dict.get('history')
 
         return model
 
-    def save_model_to_wandb(self, name: str) -> None:
-        if self.wandb_details is None or not wandb.run:
-             print("Wandb not initialized or run not active. Skipping artifact saving.")
-             return
-             
-        temp_dir = tempfile.mkdtemp()
-        temp_file_path = os.path.join(temp_dir, "transformer_model.pkl")
-        
-        try:
-            with open(temp_file_path, "wb") as f:
-                # Use pickle for simplicity, but torch.save might be safer for tensors
-                pickle.dump(self.get_state_dict(), f)
-            
-            artifact = wandb.Artifact(name=name, type="model", description="TransformerModel state dict")
-            artifact.add_file(temp_file_path)
-            
-            logged_artifact = wandb.log_artifact(artifact)
-            print(f"Logging artifact '{name}' to Wandb...")
-            logged_artifact.wait()
-            print("Artifact logging complete.")
-            
-        except Exception as e:
-             print(f"Error saving model artifact to Wandb: {e}")
-        finally:
-            shutil.rmtree(temp_dir)
-
-
-    # --- Inner nn.Module Definition ---
     class TransformerModule(nn.Module):
         def __init__(
             self,
@@ -549,7 +446,6 @@ class TransformerModel(ModelBase):
         ) -> None:
             super().__init__()
             self.d_model = d_model
-            self.max_seq_len = max_seq_len
 
             # Input Embedding: Linear layer to project input features to d_model
             self.input_embedding = nn.Linear(input_dim, d_model)
@@ -605,11 +501,11 @@ class TransformerModel(ModelBase):
 
             # 3. Pass through Transformer Encoder
             # TransformerEncoderLayer expects src_key_padding_mask where True indicates positions to be IGNORED.
-            # Our mask has True for valid tokens. We need to invert it.
-            padding_mask = ~src_key_padding_mask 
-            # print(f"Inverted Mask shape: {padding_mask.shape}")
+            # Our mask (`src_key_padding_mask`) has True for valid tokens. We need to invert it.
+            pytorch_padding_mask = ~src_key_padding_mask 
+            # print(f"Inverted Mask shape: {pytorch_padding_mask.shape}") # True=ignore
 
-            encoder_output = self.transformer_encoder(src_embedded, src_key_padding_mask=padding_mask)
+            encoder_output = self.transformer_encoder(src_embedded, src_key_padding_mask=pytorch_padding_mask)
             # print(f"Encoder Output shape: {encoder_output.shape}") # B, S, D
 
             # 4. Aggregate sequence output (Mean Pooling over sequence dim)
@@ -632,4 +528,3 @@ class TransformerModel(ModelBase):
             # print(f"Final Output shape: {output.shape}")
 
             return output
-

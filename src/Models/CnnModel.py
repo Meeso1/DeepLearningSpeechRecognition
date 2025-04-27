@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 import shutil
 from typing import Any
 import numpy as np
@@ -14,16 +13,7 @@ from Models.ModelBase import ModelBase
 from torch.utils.data import DataLoader, TensorDataset
 from Models.TrainingHistory import TrainingHistory
 from Models.RandomUndersampler import RandomUndersampler
-
-
-@dataclass
-class WandbDetails:
-    project: str
-    experiment_name: str
-    config_name: str
-    artifact_name: str | None = None
-    # Set init_project to False to manually call wandb.init()/wandb.finish() to be able to call train() multiple times or something
-    init_project: bool = True
+from Models.WandbDetails import WandbDetails
 
 
 class CnnModel(ModelBase):

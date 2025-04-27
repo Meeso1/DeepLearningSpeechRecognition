@@ -8,4 +8,6 @@ pillow==11.1.0
 soundfile==0.13.1
 wandb==0.19.8
 seaborn==0.13.2
-scikit-learn==1.6.1
+scikit-learn==1.5.2
+optimization @ git+https://github.com/Meeso1/optimization@main
+scipy==1.12.0

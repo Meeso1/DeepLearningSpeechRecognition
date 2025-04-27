@@ -309,15 +309,13 @@ class TransformerModel(ModelBase):
         train_metrics: tuple[float, float],
         val_metrics: tuple[float, float] | None
     ) -> None:
-        lr = self.optimizer.param_groups[0]['lr']
         epoch_str = f'Epoch {epoch+1:>{len(str(total_epochs))}}/{total_epochs}'
         train_str = f'Train Loss: {train_metrics[0]:.4f} | Train Acc: {train_metrics[1]:6.2f}%'
         val_str = ''
         if val_metrics is not None:
              val_str = f'Val Loss: {val_metrics[0]:.4f} | Val Acc: {val_metrics[1]:6.2f}%'
-        lr_str = f'LR: {lr:.6f}'
         
-        print(f'{epoch_str} | {train_str} | {val_str} | {lr_str}')
+        print(f'{epoch_str} | {train_str} | {val_str}')
 
     def predict(self, X: list[np.ndarray], batch_size: int = 32) -> np.ndarray:
         self._validate_x(X)

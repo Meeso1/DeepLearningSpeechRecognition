@@ -158,16 +158,13 @@ class TransformerModel(ModelBase):
     ) -> DataLoader:
         """Validate (X, y) pair and make DataLoader for it"""
 
-        X, y = zip(*data)
-        X, y = list(X), np.array(y)
-        
+        X, y = data
         self._validate_x_and_y(X, y)
 
-        X_np = np.array(X, dtype=np.float32) 
         y_one_hot = self._to_one_hot(y)
 
-        X_tensor = torch.from_numpy(X_np).to(self.device)
-        y_tensor = torch.from_numpy(y_one_hot).to(self.device)
+        X_tensor = torch.from_numpy(np.array(X, dtype=np.float32)).to(self.device)
+        y_tensor = torch.from_numpy(y_one_hot.astype(np.float32)).to(self.device)
 
         dataset = TensorDataset(X_tensor, y_tensor)
         sampler = RandomUndersampler(torch.from_numpy(y).to(self.device)) if undersample else None
@@ -179,8 +176,8 @@ class TransformerModel(ModelBase):
 
     def train(
         self,
-        train_data: list[tuple[np.ndarray, np.ndarray]],
-        val_data: list[tuple[np.ndarray, np.ndarray]] | None = None,
+        train_data: tuple[list[np.ndarray], np.ndarray],
+        val_data: tuple[list[np.ndarray], np.ndarray] | None = None,
         epochs: int = 10,
         batch_size: int = 32
     ) -> None:
@@ -240,7 +237,6 @@ class TransformerModel(ModelBase):
             epoch_train_accuracy = 100.0 * correct_train / total_train
             self.history.train_loss.append(epoch_train_loss)
             self.history.train_accuracy.append(epoch_train_accuracy)
-
 
             epoch_val_loss, epoch_val_accuracy = self._perform_validation(val_loader, epoch)
             
@@ -468,7 +464,6 @@ class TransformerModel(ModelBase):
             # For now, let's average pool the sequence output.
             self.output_layer = nn.Linear(d_model, output_dim)
             self.softmax = nn.Softmax(dim=1) # Apply softmax for probability distribution
-
 
         def forward(self, src: torch.Tensor, src_key_padding_mask: torch.Tensor) -> torch.Tensor:
             """

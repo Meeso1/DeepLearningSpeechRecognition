@@ -100,8 +100,8 @@ class CnnModel(ModelBase):
 
     def train(
         self,
-        train_data: list[tuple[np.ndarray, np.ndarray]],
-        val_data: list[tuple[np.ndarray, np.ndarray]] | None = None,
+        train_data: tuple[list[np.ndarray], np.ndarray],
+        val_data: tuple[list[np.ndarray], np.ndarray] | None = None,
         epochs: int = 10,
         batch_size: int = 32
     ) -> None:

@@ -271,7 +271,7 @@ class TransformerModel(ModelBase):
 
             wandb.finish()
 
-    def _perform_validation(self, val_loader: DataLoader | None, epoch: int) -> tuple[float, float] | None:
+    def _perform_validation(self, val_loader: DataLoader | None, epoch: int) -> tuple[float | None, float | None]:
         """Perform validation using a DataLoader"""
         if val_loader is None or (epoch + 1) % self.validate_every != 0:
             return None, None

@@ -130,14 +130,14 @@ class CnnModel(ModelBase):
 
         for epoch in range(epochs):
             epoch_train_loss, epoch_train_accuracy = self._train_epoch(train_loader)
-            epoch_val_loss, epoch_val_accuracy = self._perform_validation(val_loader, epoch)
+            epoch_validation = self._perform_validation(val_loader, epoch)
             
             if self.wandb_details is not None:
                 wandb.log({
                     'train_loss': epoch_train_loss,
                     'train_accuracy': epoch_train_accuracy,
-                    'val_loss': epoch_val_loss,
-                    'val_accuracy': epoch_val_accuracy
+                    'val_loss': epoch_validation[0] if epoch_validation is not None else None,
+                    'val_accuracy': epoch_validation[1] if epoch_validation is not None else None
                 })
 
             # Update learning rate
@@ -148,7 +148,7 @@ class CnnModel(ModelBase):
                     epoch,
                     epochs,
                     (epoch_train_loss, epoch_train_accuracy),
-                    (epoch_val_loss, epoch_val_accuracy))
+                    epoch_validation)
                 
         if self.wandb_details is not None and self.wandb_details.init_project:
             if self.wandb_details.artifact_name is not None:

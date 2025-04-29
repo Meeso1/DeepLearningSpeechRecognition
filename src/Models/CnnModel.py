@@ -276,6 +276,8 @@ class CnnModel(ModelBase):
         with torch.no_grad():
             all_predicted = []
             for inputs in loader:
+                # Unpack the tensor from the tuple returned by DataLoader
+                inputs = inputs[0]
                 outputs = self.model(inputs)
                 _, predicted = torch.max(outputs, 1)
                 all_predicted.append(predicted.cpu())
